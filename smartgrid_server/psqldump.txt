@@ -1,0 +1,17 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    email VARCHAR(50) NOT NULL,
+    login VARCHAR(50) NOT NULL,
+    pass VARCHAR(255) NOT NULL,
+    isverified BOOLEAN NOT NULL
+);
+
+ALTER TABLE users ADD COLUMN jwt_token TEXT;
+
+CREATE TABLE devices (
+    id SERIAL PRIMARY KEY,
+    ip_addr VARCHAR(50) NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(50) NOT NULL
+);
