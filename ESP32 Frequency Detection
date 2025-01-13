@@ -1,0 +1,73 @@
+#include <Arduino.h>
+
+const int signalInPin = 4;   // GPIO4 for detecting the signal
+const int ledPin = 2;        // Onboard LED for feedback
+
+volatile unsigned long lastEdgeTime = 0; // Time of the last detected rising edge
+volatile unsigned long currentEdgeTime = 0; // Time of the current detected rising edge
+volatile float frequency = 0.0; // Calculated frequency in Hz
+
+// Frequency range (acceptable range for 60 Hz)
+const float lowerBound = 59.000;
+const float upperBound = 61.000;
+
+// Variables for non-blocking LED blinking
+bool ledState = false;
+unsigned long lastBlinkTime = 0; // Tracks the last time the LED state changed
+const unsigned long blinkInterval = 100; // Blink interval in milliseconds
+
+void IRAM_ATTR onEdge() {
+    currentEdgeTime = micros(); // Get the current time
+    unsigned long interval = currentEdgeTime - lastEdgeTime; // Calculate time difference
+    
+    if (interval > 100 && interval < 500000) { // Ignore noise and large intervals
+        lastEdgeTime = currentEdgeTime; // Update the last edge time
+        frequency = 1000000.0 / interval; // Calculate frequency in Hz
+    } else {
+        frequency = 0; // Treat invalid intervals as no signal
+    } 
+}
+
+void setup() {
+    Serial.begin(115200);
+
+    // Pin configuration
+    pinMode(signalInPin, INPUT_PULLDOWN); // GPIO4 as input with pull-down resistor
+    pinMode(ledPin, OUTPUT);             // LED for visual feedback
+
+    // Attach interrupt for frequency detection on GPIO4
+    attachInterrupt(digitalPinToInterrupt(signalInPin), onEdge, RISING);
+
+    Serial.println("Setup complete. Ready to detect frequency from waveform generator...");
+}
+
+void loop() {
+    unsigned long currentTime = millis();
+
+    // Check if frequency is out of range or no signal is detected
+    if (frequency < lowerBound || frequency > upperBound || frequency == 0) {
+        // Non-blocking LED blinking
+        if (currentTime - lastBlinkTime >= blinkInterval) {
+            lastBlinkTime = currentTime; // Update the last blink time
+            ledState = !ledState;        // Toggle LED state
+            digitalWrite(ledPin, ledState); // Set the LED state
+        }
+    } else {
+        // Keep the LED off if the frequency is within range
+        digitalWrite(ledPin, LOW);
+    }
+
+    // Print debug information less frequently (every 2 seconds)
+    static unsigned long lastPrintTime = 0;
+    if (currentTime - lastPrintTime >= 2000) { // Adjust interval here
+        lastPrintTime = currentTime;
+
+        if (frequency > 0.0) {
+            Serial.print("Measured Frequency: ");
+            Serial.print(frequency);
+            Serial.println(" Hz");
+        } else {
+            Serial.println("No signal detected (Frequency = 0 Hz).");
+        }
+    }
+}
