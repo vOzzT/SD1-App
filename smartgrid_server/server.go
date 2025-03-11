@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -18,15 +19,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret []byte
-var deviceConnections = make(map[string]*websocket.Conn) // Map to store WebSocket connections for devices
 var db *sql.DB
+var jwtSecret []byte
 
+// WebSocket upgrader
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow connections from any origin
-	},
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
+
+var (
+	deviceConnections = make(map[string]*websocket.Conn) // Maps MAC to WebSocket
+	mu                sync.Mutex
+)
 
 // JWT Claims struct
 type Claims struct {
@@ -51,10 +55,10 @@ type User struct {
 }
 
 type Device struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	IPAddr string `json:"ip_addr"`
-	UserID int    `json:"user_id"`
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	MACAddr string `json:"_addr"`
+	UserID  int    `json:"user_id"`
 }
 
 // Load environment variables from .env file
@@ -67,6 +71,64 @@ func init() {
 
 	// Set JWT secret
 	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+}
+
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("WebSocket upgrade failed:", err)
+		return
+	}
+
+	// Read MAC address from device
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		log.Println("Failed to read MAC address:", err)
+		conn.Close()
+		return
+	}
+	macAddress := string(msg)
+
+	// Check if this MAC is already linked to a device
+	var deviceID, userID int
+	err = db.QueryRow(`SELECT id, user_id FROM devices WHERE mac_addr = $1`, macAddress).Scan(&deviceID, &userID)
+	if err == sql.ErrNoRows {
+		// MAC is new, find the first device without a MAC and link it
+		err = db.QueryRow(`UPDATE devices SET mac_addr = $1 WHERE mac_addr IS NULL RETURNING id, user_id`, macAddress).Scan(&deviceID, &userID)
+		if err != nil {
+			log.Println("No available device entry to update for MAC:", macAddress)
+			conn.Close()
+			return
+		}
+		log.Printf("Linked MAC %s to device %d\n", macAddress, deviceID)
+	} else if err != nil {
+		log.Println("Database error:", err)
+		conn.Close()
+		return
+	}
+
+	// Close existing connection if device is reconnecting
+	mu.Lock()
+	if oldConn, exists := deviceConnections[macAddress]; exists {
+		oldConn.Close() // Properly close the old connection
+	}
+	deviceConnections[macAddress] = conn
+	mu.Unlock()
+
+	log.Println("Device connected:", macAddress)
+
+	// Keep connection alive
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("Device disconnected:", macAddress)
+			mu.Lock()
+			delete(deviceConnections, macAddress)
+			mu.Unlock()
+			conn.Close()
+			break
+		}
+	}
 }
 
 func createUser(c *gin.Context) {
@@ -251,19 +313,19 @@ func login(c *gin.Context) {
 func createDevice(c *gin.Context) {
 	type DeviceInput struct {
 		Name   string `json:"name" binding:"required"`
-		IPAddr string `json:"ip_addr" binding:"required"`
 		UserID int    `json:"user_id" binding:"required"`
 	}
 
 	var input DeviceInput
-	if err := c.BindJSON(&input); err != nil {
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
-	sqlStatement := `INSERT INTO devices (name, ip_addr, user_id) VALUES ($1, $2, $3) RETURNING id`
+	sqlStatement := `INSERT INTO devices (name, user_id) VALUES ($1, $2) RETURNING id`
+	fmt.Println(sqlStatement, input.Name, input.UserID)
 	var deviceID int
-	err := db.QueryRow(sqlStatement, input.Name, input.IPAddr, input.UserID).Scan(&deviceID)
+	err := db.QueryRow(sqlStatement, input.Name, input.UserID).Scan(&deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create device"})
 		return
@@ -276,8 +338,8 @@ func readDevice(c *gin.Context) {
 	deviceID := c.Param("id")
 	var device Device
 
-	sqlStatement := `SELECT id, name, ip_addr, user_id FROM devices WHERE id = $1`
-	err := db.QueryRow(sqlStatement, deviceID).Scan(&device.ID, &device.Name, &device.IPAddr, &device.UserID)
+	sqlStatement := `SELECT id, name, mac_addr, user_id FROM devices WHERE id = $1`
+	err := db.QueryRow(sqlStatement, deviceID).Scan(&device.ID, &device.Name, &device.MACAddr, &device.UserID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
@@ -294,8 +356,7 @@ func updateDevice(c *gin.Context) {
 	deviceID := c.Param("id")
 
 	type DeviceUpdate struct {
-		Name   string `json:"name"`
-		IPAddr string `json:"ip_addr"`
+		Name string `json:"name"`
 	}
 
 	var deviceUpdate DeviceUpdate
@@ -304,8 +365,8 @@ func updateDevice(c *gin.Context) {
 		return
 	}
 
-	sqlStatement := `UPDATE devices SET name = $1, ip_addr = $2 WHERE id = $3`
-	res, err := db.Exec(sqlStatement, deviceUpdate.Name, deviceUpdate.IPAddr, deviceID)
+	sqlStatement := `UPDATE devices SET name = $1 WHERE id = $3`
+	res, err := db.Exec(sqlStatement, deviceUpdate.Name, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update device"})
 		return
@@ -344,44 +405,66 @@ func deleteDevice(c *gin.Context) {
 func sendPacket(c *gin.Context) {
 	deviceID := c.Param("id")
 
-	// Fetch the IP address of the device from the database using deviceID
-	var deviceIP string
-	err := db.QueryRow(`SELECT ip_addr FROM devices WHERE id = $1`, deviceID).Scan(&deviceIP)
+	// Get MAC address from database
+	var macAddr string
+	err := db.QueryRow(`SELECT mac_addr FROM devices WHERE id = $1`, deviceID).Scan(&macAddr)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
 	}
 
-	// Dummy packet data to turn on the LED
-	payload := `{"action": "turn_on_led"}`
+	// Check if the device is connected via WebSocket
+	mu.Lock()
+	conn, exists := deviceConnections[macAddr]
+	mu.Unlock()
 
-	// Define the ESP32 endpoint and prepare the HTTP request
-	url := fmt.Sprintf("http://%s/led", deviceIP)
-	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not connected"})
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	// Set a timeout for the HTTP client
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	// Send the packet to the ESP32
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Println("Error sending packet:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send packet to ESP32"})
+	// Parse user command
+	var reqBody struct {
+		Command   string `json:"command"`
+		BreakerID *int   `json:"breakerId,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&reqBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
-	defer resp.Body.Close()
 
-	// Check the ESP32 response status
-	if resp.StatusCode == http.StatusOK {
-		c.JSON(http.StatusOK, gin.H{"message": "Packet sent successfully", "packet": payload})
-	} else {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ESP32 failed to process packet"})
+	// Create payload
+	var payload string
+	switch reqBody.Command {
+	case "pingDevice":
+		payload = `{"command": "pingDevice"}`
+	case "flashLED":
+		payload = `{"command": "flashLED"}`
+	case "toggleBreaker":
+		if reqBody.BreakerID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Breaker ID required"})
+			return
+		}
+		payload = fmt.Sprintf(`{"command": "toggleBreaker", "breakerId": %d}`, *reqBody.BreakerID)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown command"})
+		return
 	}
+
+	// Send command via WebSocket
+	err = conn.WriteMessage(websocket.TextMessage, []byte(payload))
+	if err != nil {
+		log.Println("WebSocket write failed for:", macAddr, err)
+		mu.Lock()
+		delete(deviceConnections, macAddr) // Remove stale connection
+		mu.Unlock()
+		conn.Close()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Device disconnected"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Command sent successfully"})
+
 }
 
 func AuthMiddleware() gin.HandlerFunc {
@@ -421,7 +504,7 @@ func fetchDevices(c *gin.Context) {
 
 	// Query devices associated with the user
 	var devices []Device
-	sqlStatement := `SELECT id, name, ip_addr, user_id FROM devices WHERE user_id = $1`
+	sqlStatement := `SELECT id, name, mac_addr, user_id FROM devices WHERE user_id = $1`
 	rows, err := db.Query(sqlStatement, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
@@ -431,7 +514,7 @@ func fetchDevices(c *gin.Context) {
 
 	for rows.Next() {
 		var device Device
-		if err := rows.Scan(&device.ID, &device.Name, &device.IPAddr, &device.UserID); err != nil {
+		if err := rows.Scan(&device.ID, &device.Name, &device.MACAddr, &device.UserID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse device data"})
 			return
 		}
@@ -471,6 +554,12 @@ func main() {
 	defer db.Close()
 
 	router := gin.Default()
+
+	// WebSocket endpoint
+	router.GET("/ws", func(c *gin.Context) {
+		handleWebSocket(c.Writer, c.Request)
+	})
+
 	router.POST("/createUser", createUser)       // C USER
 	router.GET("/searchUser", readUser)          // R USER
 	router.PUT("/updateUser/:id", updateUser)    // U USER
@@ -490,5 +579,8 @@ func main() {
 	// In your main function, add the endpoint
 	router.POST("/sendPacket/:id", sendPacket)
 
-	router.Run(":8080")
+	log.Println("Server is running on :8080")
+	if err := router.Run(":8080"); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
 }
