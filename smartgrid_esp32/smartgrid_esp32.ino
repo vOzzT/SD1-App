@@ -10,7 +10,16 @@ using namespace websockets;
 WebsocketsClient client;
 
 const int signalInPin = 14;   // GPIO4 for detecting the signal
-const int ledPin = 2;  // GPIO for built-in LED
+const int ledPin = 27;  // GPIO for built-in LED
+
+const int stepPin = 5; 
+const int dirPin = 18; 
+const int enPin = 17;
+
+const int stepPin2 = 4; 
+const int dirPin2 = 16; 
+const int enPin2 = 17;
+
 unsigned long lastReconnectAttempt = 0;
 
 volatile unsigned long lastEdgeTime = 0; // Time of the last detected rising edge
@@ -107,6 +116,16 @@ void setup() {
     // Pin configuration
     pinMode(signalInPin, INPUT_PULLDOWN); // GPIO4 as input with pull-down resistor
     pinMode(ledPin, OUTPUT);             // LED for visual feedback
+    
+    pinMode(stepPin,OUTPUT);            
+    pinMode(dirPin,OUTPUT);
+    pinMode(enPin,OUTPUT);
+    pinMode(stepPin2,OUTPUT); 
+    pinMode(dirPin2,OUTPUT);
+    pinMode(enPin2,OUTPUT);
+
+    digitalWrite(enPin,LOW);
+    digitalWrite(enPin2,LOW);
     digitalWrite(ledPin, LOW); // Ensure the LED is off 
 
     // Attach interrupt for frequency detection on GPIO4
