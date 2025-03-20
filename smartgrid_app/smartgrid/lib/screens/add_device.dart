@@ -25,7 +25,6 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
     try {
       await deviceService.createDevice(
         name: nameController.text,
-        ipAddress: ipController.text,
         userId: userId,
       );
       ScaffoldMessenger.of(context)
@@ -49,11 +48,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
               controller: nameController,
               decoration: InputDecoration(labelText: 'Device Name'),
             ),
-            TextField(
-              controller: ipController,
-              decoration: InputDecoration(labelText: 'IP Address'),
-              keyboardType: TextInputType.number,
-            ),
+            SizedBox(height: 10),
             ElevatedButton(
               onPressed: _createDevice,
               child: Text('Create Device'),

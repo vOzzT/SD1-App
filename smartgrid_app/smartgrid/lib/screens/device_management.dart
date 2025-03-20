@@ -27,7 +27,69 @@ class _DeviceScreenState extends State<DeviceScreen> {
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => LoginScreen()),
-      (route) => false,
+          (route) => false,
+    );
+  }
+
+  // Method to delete the device
+  Future<void> deleteDevice(int deviceId) async {
+    try {
+      await deviceService.deleteDevice(deviceId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Device deleted successfully')),
+      );
+      setState(() {
+        devices = deviceService.fetchDevices(); // Refresh the devices list
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete device: $e')),
+      );
+    }
+  }
+
+  // Method to handle device name update
+  Future<void> updateDeviceName(int deviceId, String currentName) async {
+    TextEditingController nameController = TextEditingController();
+    nameController.text = currentName;
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Update Device Name'),
+        content: TextField(
+          controller: nameController,
+          decoration: InputDecoration(labelText: 'Device Name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              String newName = nameController.text;
+              if (newName.isNotEmpty) {
+                try {
+                  await deviceService.updateDevice(deviceId: deviceId, name: newName);
+                  setState(() {
+                    devices = deviceService.fetchDevices(); // Refresh the devices list
+                  });
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Device name updated successfully')),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to update device name: $e')),
+                  );
+                }
+              }
+            },
+            child: Text('Update'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -76,7 +138,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
                 final device = snapshot.data![index];
                 return ListTile(
                   title: Text(device['name']),
-                  subtitle: Text(device['ip_addr']),
+                  subtitle: Text(device['mac_addr']),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -86,6 +148,25 @@ class _DeviceScreenState extends State<DeviceScreen> {
                       ),
                     );
                   },
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Pencil icon for editing device name
+                      IconButton(
+                        icon: Icon(Icons.edit),
+                        onPressed: () {
+                          updateDeviceName(device['id'], device['name']);
+                        },
+                      ),
+                      // Trash can icon for deleting device
+                      IconButton(
+                        icon: Icon(Icons.delete),
+                        onPressed: () {
+                          deleteDevice(device['id']);
+                        },
+                      ),
+                    ],
+                  ),
                 );
               },
             );

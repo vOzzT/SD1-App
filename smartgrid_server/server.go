@@ -57,8 +57,16 @@ type User struct {
 type Device struct {
 	ID      int    `json:"id"`
 	Name    string `json:"name"`
-	MACAddr string `json:"_addr"`
+	MACAddr string `json:"mac_addr"`
 	UserID  int    `json:"user_id"`
+}
+
+type Breaker struct {
+	ID             int    `json:"id"`
+	DeviceID       int    `json:"device_id"`
+	Name           string `json:"name"`
+	Breaker_Number string `json:"breaker_number"`
+	Status         bool   `json:"status"`
 }
 
 // Load environment variables from .env file
@@ -365,7 +373,7 @@ func updateDevice(c *gin.Context) {
 		return
 	}
 
-	sqlStatement := `UPDATE devices SET name = $1 WHERE id = $3`
+	sqlStatement := `UPDATE devices SET name = $1 WHERE id = $2`
 	res, err := db.Exec(sqlStatement, deviceUpdate.Name, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update device"})
@@ -400,6 +408,100 @@ func deleteDevice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Device deleted successfully"})
+}
+
+func createBreaker(c *gin.Context) {
+	type BreakerInput struct {
+		DeviceID   int    `json:"device_id" binding:"required"`
+		Name       string `json:"name" binding:"required"`
+		BreakerNum string `json:"breaker_number" binding:"required"`
+	}
+
+	var input BreakerInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	sqlStatement := `INSERT INTO breakers (name, device_id, breaker_number) VALUES ($1, $2, $3) RETURNING id`
+	fmt.Println(sqlStatement, input.Name, input.DeviceID, input.BreakerNum)
+	var breakerID int
+	err := db.QueryRow(sqlStatement, input.Name, input.DeviceID, input.BreakerNum).Scan(&breakerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create device"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Breaker created successfully", "breakerID": breakerID})
+}
+
+func readBreaker(c *gin.Context) {
+	breakerID := c.Param("id")
+	var breaker Breaker
+
+	sqlStatement := `SELECT id, name, device_id, breaker_number FROM breakers WHERE id = $1`
+	err := db.QueryRow(sqlStatement, breakerID).Scan(&breaker.ID, &breaker.Name, &breaker.DeviceID, &breaker.Breaker_Number)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Breaker not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve device"})
+		return
+	}
+
+	c.JSON(http.StatusOK, breaker)
+}
+
+func updateBreaker(c *gin.Context) {
+	breakerID := c.Param("id")
+
+	type BreakerUpdate struct {
+		Name          string `json:"name"`
+		BreakerNumber string `json:"breaker_number"`
+	}
+
+	var breakerUpdate BreakerUpdate
+	if err := c.BindJSON(&breakerUpdate); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	sqlStatement := `UPDATE breakers SET name = $1, breaker_number = $2 WHERE id = $3`
+	res, err := db.Exec(sqlStatement, breakerUpdate.Name, breakerUpdate.BreakerNumber, breakerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update breaker"})
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Breaker not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Breaker updated successfully"})
+}
+
+func deleteBreaker(c *gin.Context) {
+	// Get the device ID from the URL parameter
+	breakerID := c.Param("id")
+
+	// Delete the device from the database
+	sqlStatement := `DELETE FROM breakers WHERE id = $1`
+	res, err := db.Exec(sqlStatement, breakerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not delete device"})
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Breaker not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Breaker deleted successfully"})
 }
 
 func sendPacket(c *gin.Context) {
@@ -504,7 +606,7 @@ func fetchDevices(c *gin.Context) {
 
 	// Query devices associated with the user
 	var devices []Device
-	sqlStatement := `SELECT id, name, mac_addr, user_id FROM devices WHERE user_id = $1`
+	sqlStatement := `SELECT id, user_id, name, mac_addr FROM devices WHERE user_id = $1`
 	rows, err := db.Query(sqlStatement, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
@@ -514,14 +616,73 @@ func fetchDevices(c *gin.Context) {
 
 	for rows.Next() {
 		var device Device
-		if err := rows.Scan(&device.ID, &device.Name, &device.MACAddr, &device.UserID); err != nil {
+		var macAddr sql.NullString // Handles NULL values
+
+		if err := rows.Scan(&device.ID, &device.UserID, &device.Name, &macAddr); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse device data"})
 			return
 		}
+
+		// Convert NullString to standard string (empty string if NULL)
+		device.MACAddr = macAddr.String
+
 		devices = append(devices, device)
 	}
 
 	c.JSON(http.StatusOK, devices)
+}
+
+func fetchBreakers(c *gin.Context) {
+	// Retrieve the user ID from the context
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Retrieve the device ID from the URL parameter
+	deviceID := c.Param("id")
+	if deviceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Device ID is required"})
+		return
+	}
+
+	// Verify the device belongs to the authenticated user
+	var device Device
+	sqlStatement := `SELECT id, user_id FROM devices WHERE id = $1 AND user_id = $2`
+	err := db.QueryRow(sqlStatement, deviceID, userID).Scan(&device.ID, &device.UserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found or does not belong to the user"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify device"})
+		}
+		return
+	}
+
+	// Query breakers associated with the device ID
+	var breakers []Breaker
+	sqlStatement = `SELECT id, device_id, name, breaker_number, status FROM breakers WHERE device_id = $1`
+	rows, err := db.Query(sqlStatement, deviceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch breakers"})
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var breaker Breaker
+
+		if err := rows.Scan(&breaker.ID, &breaker.DeviceID, &breaker.Name, &breaker.Breaker_Number, &breaker.Status); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse breaker data"})
+			return
+		}
+
+		breakers = append(breakers, breaker)
+	}
+
+	// Return the list of breakers as a JSON response
+	c.JSON(http.StatusOK, breakers)
 }
 
 func connectDB() (*sql.DB, error) {
@@ -570,11 +731,17 @@ func main() {
 	router.PUT("/updateDevice/:id", updateDevice)    // U DEVICE
 	router.DELETE("/deleteDevice/:id", deleteDevice) // D DEVICE
 
+	router.POST("/createBreaker", createBreaker)       // C BREAKER
+	router.GET("/readBreaker/:id", readBreaker)        // R DEVICE
+	router.PUT("/updateBreaker/:id", updateBreaker)    // U BREAKER
+	router.DELETE("/deleteBreaker/:id", deleteBreaker) // D BREAKER
+
 	// Other routes...
 	router.POST("/login", login)
 
 	// Protected route to fetch devices, requires valid JWT
 	router.GET("/fetchDevices", AuthMiddleware(), fetchDevices)
+	router.GET("/fetchBreakers/:id", AuthMiddleware(), fetchBreakers)
 
 	// In your main function, add the endpoint
 	router.POST("/sendPacket/:id", sendPacket)
