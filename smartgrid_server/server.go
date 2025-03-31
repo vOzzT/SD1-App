@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -69,6 +70,14 @@ type Breaker struct {
 	Status         bool   `json:"status"`
 }
 
+type DeviceResponse struct {
+	Command      string   `json:"command"`
+	MACAddr      string   `json:"mac_addr,omitempty"`
+	BreakerID    *int     `json:"breakerId,omitempty"`
+	BreakerState *bool    `json:"breakerState,omitempty"`
+	Frequency    *float64 `json:"frequency,omitempty"`
+}
+
 // Load environment variables from .env file
 func init() {
 	// Load environment variables from .env file
@@ -90,6 +99,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Read MAC address from device
 	_, msg, err := conn.ReadMessage()
+
 	if err != nil {
 		log.Println("Failed to read MAC address:", err)
 		conn.Close()
@@ -125,18 +135,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("Device connected:", macAddress)
 
-	// Keep connection alive
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Device disconnected:", macAddress)
-			mu.Lock()
-			delete(deviceConnections, macAddress)
-			mu.Unlock()
-			conn.Close()
-			break
-		}
-	}
+	// Start a goroutine to receive packets from the device
+	go receivePacket(conn)
 }
 
 func createUser(c *gin.Context) {
@@ -527,8 +527,9 @@ func sendPacket(c *gin.Context) {
 
 	// Parse user command
 	var reqBody struct {
-		Command   string `json:"command"`
-		BreakerID *int   `json:"breakerId,omitempty"`
+		Command      string `json:"command"`
+		BreakerID    *int   `json:"breakerId,omitempty"`
+		BreakerState *bool  `json:"breakerState,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&reqBody); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
@@ -543,11 +544,11 @@ func sendPacket(c *gin.Context) {
 	case "flashLED":
 		payload = `{"command": "flashLED"}`
 	case "toggleBreaker":
-		if reqBody.BreakerID == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Breaker ID required"})
+		if reqBody.BreakerID == nil || reqBody.BreakerState == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Breaker ID and state required"})
 			return
 		}
-		payload = fmt.Sprintf(`{"command": "toggleBreaker", "breakerId": %d}`, *reqBody.BreakerID)
+		payload = fmt.Sprintf(`{"command": "toggleBreaker", "breakerId": %d, "breakerState": %v}`, *reqBody.BreakerID, *reqBody.BreakerState)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown command"})
 		return
@@ -566,7 +567,74 @@ func sendPacket(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Command sent successfully"})
+}
 
+func receivePacket(conn *websocket.Conn) {
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("Failed to read response from ESP32:", err)
+			return
+		}
+
+		// Log the raw message for debugging
+		log.Printf("Raw message received: %s\n", string(message))
+
+		// Parse incoming JSON
+		var response DeviceResponse
+		if err := json.Unmarshal(message, &response); err != nil {
+			log.Println("Invalid response format:", err)
+			continue
+		}
+
+		// Route message based on command type
+		switch response.Command {
+		case "toggleBreaker":
+			handleCommandAcknowledgment(response)
+		case "frequencyUpdate":
+			handleTelemetryData(response)
+		default:
+			log.Println("Unknown command received:", response.Command)
+		}
+	}
+}
+
+func handleCommandAcknowledgment(response DeviceResponse) {
+	if response.BreakerID == nil || response.BreakerState == nil {
+		log.Println("Missing breaker toggle response data")
+		return
+	}
+
+	// Update breaker status in the database
+	_, err := db.Exec(`UPDATE breakers SET status = $1 WHERE id = $2`, *response.BreakerState, *response.BreakerID)
+	if err != nil {
+		log.Println("Database update failed:", err)
+		return
+	}
+	// log.Printf("Breaker %d updated to status %v", *response.BreakerID, *response.BreakerState)
+}
+
+func handleTelemetryData(response DeviceResponse) {
+	if response.Frequency == nil {
+		log.Println("Missing frequency data")
+		return
+	}
+
+	// Retrieve device ID from MAC address
+	var deviceID int
+	err := db.QueryRow(`SELECT id FROM devices WHERE mac_addr = $1`, response.MACAddr).Scan(&deviceID)
+	if err != nil {
+		log.Println("Device not found for MAC:", response.MACAddr)
+		return
+	}
+
+	// Insert frequency data into logs
+	_, err = db.Exec(`INSERT INTO frequency_logs (device_id, frequency, timestamp) VALUES ($1, $2, NOW())`, deviceID, *response.Frequency)
+	if err != nil {
+		log.Println("Failed to insert frequency data:", err)
+		return
+	}
+	// log.Printf("Frequency %.2f Hz logged for device %d", *response.Frequency, deviceID)
 }
 
 func AuthMiddleware() gin.HandlerFunc {
@@ -685,6 +753,52 @@ func fetchBreakers(c *gin.Context) {
 	c.JSON(http.StatusOK, breakers)
 }
 
+func fetchFrequencyData(c *gin.Context) {
+	deviceID := c.Param("id")
+	startTime := c.Query("start") // Optional start time
+	endTime := c.Query("end")     // Optional end time
+
+	query := `SELECT frequency, timestamp FROM frequency_logs WHERE device_id = $1`
+	args := []interface{}{deviceID}
+
+	if startTime != "" {
+		query += " AND timestamp >= $2"
+		args = append(args, startTime)
+	}
+	if endTime != "" {
+		query += " AND timestamp <= $3"
+		args = append(args, endTime)
+	}
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch data"})
+		return
+	}
+	defer rows.Close()
+
+	var logs []struct {
+		Frequency float64 `json:"frequency"`
+		Timestamp string  `json:"timestamp"`
+	}
+
+	for rows.Next() {
+		var log struct {
+			Frequency float64
+			Timestamp time.Time
+		}
+		if err := rows.Scan(&log.Frequency, &log.Timestamp); err != nil {
+			continue
+		}
+		logs = append(logs, struct {
+			Frequency float64 `json:"frequency"`
+			Timestamp string  `json:"timestamp"`
+		}{log.Frequency, log.Timestamp.Format(time.RFC3339)})
+	}
+
+	c.JSON(http.StatusOK, logs)
+}
+
 func connectDB() (*sql.DB, error) {
 	connStr := fmt.Sprintf(
 		"user=%s password=%s dbname=%s sslmode=%s",
@@ -706,6 +820,7 @@ func connectDB() (*sql.DB, error) {
 	fmt.Println("Connected to PostgreSQL database!")
 	return db, nil
 }
+
 func main() {
 	var err error
 	db, err = connectDB()
@@ -742,6 +857,7 @@ func main() {
 	// Protected route to fetch devices, requires valid JWT
 	router.GET("/fetchDevices", AuthMiddleware(), fetchDevices)
 	router.GET("/fetchBreakers/:id", AuthMiddleware(), fetchBreakers)
+	router.GET("/fetchFrequencyData/:id", AuthMiddleware(), fetchFrequencyData)
 
 	// In your main function, add the endpoint
 	router.POST("/sendPacket/:id", sendPacket)

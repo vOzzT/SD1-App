@@ -24,6 +24,24 @@ class DeviceService {
     }
   }
 
+  // Fetch frequency data for a specific device
+  Future<List<dynamic>> fetchFrequencyData(int deviceId) async {
+    final token = await authService.getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/fetchFrequencyData/$deviceId?start=2025-03-31T00:00:00Z&end=2025-03-31T23:59:59Z'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to load frequency data');
+    }
+  }
+
   Future<List<dynamic>> fetchBreakers(int deviceId) async {
     final token = await authService.getToken();
     final response = await http.get(
@@ -40,7 +58,6 @@ class DeviceService {
       throw Exception('Failed to load breakers');
     }
   }
-
 
   Future<bool> sendCommand(int deviceId, String command, {int? breakerId}) async {
     final Map<String, dynamic> body = {

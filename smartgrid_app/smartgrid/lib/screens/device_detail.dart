@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:smartgrid/services/device_service.dart';
+import 'package:smartgrid/screens/device_graphing.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final dynamic device;
@@ -33,6 +34,17 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     super.initState();
     fetchBreakers();  // Fetch breakers when the screen is first loaded
   }
+
+  // Navigate to FrequencyChart Screen
+  void navigateToFrequencyChart() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FrequencyChart(deviceId: widget.device['id']),
+      ),
+    );
+  }
+
 
   Future<void> flashLed() async {
     try {
@@ -218,8 +230,14 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                ElevatedButton(onPressed: pingDevice, child: Text('Ping Device')),
-                ElevatedButton(onPressed: flashLed, child: Text('Blink Led')),
+                IconButton(
+                  icon: Icon(Icons.cable, size: 30),  // Graph icon
+                  onPressed: pingDevice,  // Navigate to Frequency Chart screen
+                ),
+                IconButton(
+                  icon: Icon(Icons.insert_chart, size: 30),  // Graph icon
+                  onPressed: navigateToFrequencyChart,  // Navigate to Frequency Chart screen
+                ),
               ],
             ),
             SizedBox(height: 20),
