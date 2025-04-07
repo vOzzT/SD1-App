@@ -11,20 +11,19 @@ WebsocketsClient client;
 
 // Frequency Sensing Pin Definitions
 constexpr int SIGNAL_IN_PIN = 12;
-constexpr int LED_PIN = 27;
 
 // Define Stepper Pins
-const int stepPinY = 21;
-const int dirPinY = 2;
-const int enPinY = 23;
+const int stepPinY = 4;
+const int dirPinY = 16;
+const int enPinY = 17;
 
-const int stepPinX = 19;
+const int stepPinX = 14;
 const int dirPinX = 18;
-const int enPinX = 5;
+const int enPinX = 19;
 
 // Define Limit Switch Pins
-const uint8_t limitPinY = 15;
-const uint8_t limitPinX = 22;
+const uint8_t limitPinY = 27;
+const uint8_t limitPinX = 26;
 
 // Frequency & LED Control
 constexpr float LOWER_FREQ_BOUND = 59.0f;
@@ -67,6 +66,7 @@ void IRAM_ATTR isrX() {
     limitX_hit = true;
 }
 
+
 // Interrupt Service Routine (ISR) for Frequency Detection
 void IRAM_ATTR onEdge() {
     unsigned long currentEdgeTime = micros();
@@ -91,7 +91,7 @@ void homeAxis(const char* axisName, int stepPin, int dirPin, int enPin, uint8_t 
     digitalWrite(enPin, LOW);
     delay(5);
 
-    while (digitalRead(limitPin) == HIGH && !limitHitFlag) {
+    while (!limitHitFlag){ //(digitalRead(limitPin) == LOW && !limitHitFlag) {
         digitalWrite(stepPin, HIGH);
         delayMicroseconds(stepDelayUs);
         digitalWrite(stepPin, LOW);
@@ -101,7 +101,7 @@ void homeAxis(const char* axisName, int stepPin, int dirPin, int enPin, uint8_t 
     delay(10);
     digitalWrite(enPin, HIGH);
 
-    if (limitHitFlag || digitalRead(limitPin) == LOW) { // Check flag OR direct read
+    if (limitHitFlag) { // || digitalRead(limitPin) == HIGH) { // Check flag OR direct read        
         Serial.print(axisName);
         Serial.println(" axis homed successfully.");
         currentPosition = 0; // CRITICAL: Set position to 0 after homing
@@ -415,6 +415,7 @@ void onMessageCallback(WebsocketsMessage message) {
     const char* command = doc["command"];
     int breakerId = doc["breakerId"] | -1;
     bool breakerState = doc["breakerState"] | false;
+    char switchParam;
 
     if (strcmp(command, "pingDevice") == 0) {
         sendWebSocketMessage("ACK");
@@ -424,20 +425,13 @@ void onMessageCallback(WebsocketsMessage message) {
         sendWebSocketMessage("ACK");
     } 
     else if (strcmp(command, "toggleBreaker") == 0 && breakerId != -1) {
+        if (breakerState == false) switchParam = 'F';
+        else if (breakerState == true) switchParam = 'N';
+        flipSwitch(breakerId, switchParam);
         sendWebSocketMessage(command, breakerId, !breakerState);
     } 
     else {
         Serial.println("Unknown Command Received.");
-    }
-}
-
-// Flash LED a Given Number of Times
-void flashLED(int times) {
-    for (int i = 0; i < times; i++) {
-        digitalWrite(LED_PIN, HIGH);
-        delay(75);
-        digitalWrite(LED_PIN, LOW);
-        delay(75);
     }
 }
 
@@ -467,27 +461,24 @@ void handleWebSocket() {
 void setup() {
     Serial.begin(115200);
 
-    pinMode(SIGNAL_IN_PIN, INPUT_PULLDOWN);
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);
-
     // Configure Pins
     pinMode(stepPinY, OUTPUT);
     pinMode(dirPinY, OUTPUT); 
     pinMode(enPinY, OUTPUT);
-    pinMode(limitPinY, INPUT_PULLUP); 
-    digitalWrite(enPinY, HIGH);
-
+    pinMode(limitPinY, INPUT_PULLDOWN); 
+    digitalWrite(enPinY, LOW);
 
     pinMode(stepPinX, OUTPUT); 
     pinMode(dirPinX, OUTPUT); 
     pinMode(enPinX, OUTPUT);
-    pinMode(limitPinX, INPUT_PULLUP); 
-    digitalWrite(enPinX, HIGH);
+    pinMode(limitPinX, INPUT_PULLDOWN); 
+    digitalWrite(enPinX, LOW);
+
+    pinMode(SIGNAL_IN_PIN, INPUT_PULLDOWN);
 
     Serial.println("Attaching interrupts...");
-    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, FALLING);
-    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, FALLING);
+    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, RISING);
+    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, RISING);
 
     attachInterrupt(digitalPinToInterrupt(SIGNAL_IN_PIN), onEdge, RISING);
     Serial.println("Setup complete. Ready to detect frequency...");
@@ -505,7 +496,24 @@ void setup() {
     connectWebSocket();
 
     Serial.println("Starting homing procedure...");
+    Serial.println("Pre");
+    Serial.print("Y State: ");
+    Serial.println(digitalRead(limitPinY));
+    Serial.print("Y FLAG: ");
+    Serial.println(limitY_hit);
+    Serial.print("X State: ");
+    Serial.println(digitalRead(limitPinX));
+    Serial.print("X FLAG: ");
+    Serial.println(limitX_hit);
+
     homeAxis("Y", stepPinY, dirPinY, enPinY, limitPinY, limitY_hit, currentPositionY, HOME_DIR_Y, HOMING_STEP_DELAY_US);
+
+    Serial.println("Post Hone Y");
+    Serial.print("Y FLAG: ");
+    Serial.println(limitY_hit);
+    Serial.print("X FLAG: ");
+    Serial.println(limitX_hit);
+    
     homeAxis("X", stepPinX, dirPinX, enPinX, limitPinX, limitX_hit, currentPositionX, HOME_DIR_X, HOMING_STEP_DELAY_US);
     currentRow = 0; // set correct row
 
