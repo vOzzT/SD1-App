@@ -7,7 +7,7 @@ using namespace websockets;
 
 // --- Constants ---
 constexpr char WS_SERVER[] = "ws://smartgrid-app.xyz:8080/ws";
-constexpr int SIGNAL_IN_PIN = 12;
+constexpr int SIGNAL_IN_PIN = 25;
 
 // Stepper Pins
 const int stepPinY = 4, dirPinY = 16, enPinY = 17;
@@ -42,7 +42,7 @@ void IRAM_ATTR onEdge() {
     unsigned long currentEdgeTime = micros();
     unsigned long interval = currentEdgeTime - lastEdgeTime;
 
-    if (interval > 100 && interval < 500000) {
+    if (interval > 100 && interval < 5000000) {
         lastEdgeTime = currentEdgeTime;
         measuredFrequency = 1'000'000.0f / interval;
     } else {
@@ -112,7 +112,7 @@ void flipSwitch(int switchNumber, char onOff) {
     long movenumb = (7500 + 2500 * switchNumber);
     int startRow = (switchNumber % 2 == 0) ? 1 : 0;
     int flipRow = (switchNumber % 2 == 0) ? 2 : 1;
-
+    Serial.printf("Turning breaker %d %c\n", switchNumber, onOff);
     if (onOff == 'N') { // Turn on the switch
         if (currentRow != startRow) {
             moveToStartPosition('Y', 5000, 150);
@@ -215,11 +215,11 @@ void handleWebSocket() {
     }
 }
 
-void sendWebSocketMessage(const char* command, int breakerId = -1, bool breakerState = -1) {
+void sendWebSocketMessage(const char* command, int breakerNum = -1, bool breakerState = -1) {
     StaticJsonDocument<128> doc;
     doc["command"] = command;
     doc["mac_addr"] = WiFi.macAddress();
-    if (breakerId != -1) doc["breakerId"] = breakerId;
+    if (breakerNum != -1) doc["breakerNum"] = breakerNum;
     if (breakerState != -1) doc["breakerState"] = breakerState;
 
     char messageBuffer[128];
@@ -256,17 +256,17 @@ void sendFrequencyUpdate() {
 // Handle LED Blinking Based on Frequency
 void handleFrequencyRoutine() {
     if (measuredFrequency < 50 || measuredFrequency > 500 || measuredFrequency == 0.0f) {
-        if (freqBreakerState) {
+      if (freqBreakerState) {
             flipSwitch(1, 'F');
             sendWebSocketMessage("toggleBreaker", 1, false);
             freqBreakerState = !freqBreakerState;
             Serial.println("Frequency out of range, turning off breaker.");
-        } else if (!freqBreakerState) {
+      } else if (!freqBreakerState) {
             flipSwitch(1, 'N'); // Turn on the breaker
             sendWebSocketMessage("toggleBreaker", 1, true);
             freqBreakerState = !freqBreakerState;
             Serial.println("Frequency out of range, turning on breaker.");
-        }
+      }
     } 
 }
 
@@ -283,17 +283,18 @@ void onMessageCallback(WebsocketsMessage message) {
 
     const char* command = doc["command"];
     int breakerId = doc["breakerId"] | -1;
+    int breakerNum = doc["breakerNum"] | -1;
     bool breakerState = doc["breakerState"] | false;
     char switchParam;
 
     if (strcmp(command, "pingDevice") == 0) {
         sendWebSocketMessage("ACK");
     } 
-    else if (strcmp(command, "toggleBreaker") == 0 && breakerId != -1) {
+    else if (strcmp(command, "toggleBreaker") == 0 && breakerNum != -1) {
         if (breakerState == false) switchParam = 'F';
         else if (breakerState == true) switchParam = 'N';
-        flipSwitch(breakerId, switchParam);
-        sendWebSocketMessage(command, breakerId, !breakerState);
+        flipSwitch(breakerNum, switchParam);
+        sendWebSocketMessage(command, breakerNum, breakerState);
     } 
     else {
         Serial.println("Unknown Command Received.");

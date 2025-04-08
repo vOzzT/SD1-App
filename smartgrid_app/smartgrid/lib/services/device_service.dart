@@ -24,11 +24,16 @@ class DeviceService {
     }
   }
 
-  // Fetch frequency data for a specific device
-  Future<List<dynamic>> fetchFrequencyData(int deviceId) async {
+  Future<List<dynamic>> fetchFrequencyData(int deviceId, {DateTime? start, DateTime? end}) async {
     final token = await authService.getToken();
+    String url = '$baseUrl/fetchFrequencyData/$deviceId';
+
+    if (start != null && end != null) {
+      url += '?start=${start.toIso8601String()}&end=${end.toIso8601String()}';
+    }
+
     final response = await http.get(
-      Uri.parse('$baseUrl/fetchFrequencyData/$deviceId?start=2025-03-31T00:00:00Z&end=2025-03-31T23:59:59Z'),
+      Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -41,6 +46,7 @@ class DeviceService {
       throw Exception('Failed to load frequency data');
     }
   }
+
 
   Future<List<dynamic>> fetchBreakers(int deviceId) async {
     final token = await authService.getToken();
@@ -59,15 +65,17 @@ class DeviceService {
     }
   }
 
-  Future<bool> sendCommand(int deviceId, String command, {int? breakerId}) async {
+  Future<bool> sendCommand(int deviceId, String command, {int? breakerId, int? breakerNum, bool? breakerState}) async {
     final Map<String, dynamic> body = {
       'deviceId': deviceId,
       'command': command,
     };
 
     // Include breakerId only if it's provided
-    if (breakerId != null) {
+    if (breakerId != null && breakerState != null && breakerNum != null) {
       body['breakerId'] = breakerId;
+      body['breakerNumber'] = breakerNum;
+      body['breakerState'] = !breakerState;
     }
 
     final response = await http.post(
@@ -120,14 +128,15 @@ class DeviceService {
     }
   }
 
-  Future<void> createBreaker({required String name, required int deviceId, required String breaker_number}) async {
+  Future<void> createBreaker({required String name, required int deviceId, required String breakerNumber}) async {
     final response = await http.post(
       Uri.parse('$baseUrl/createBreaker'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'name': name,
         'device_id': deviceId,
-        'breaker_number': breaker_number
+        'breaker_number': breakerNumber,
+        'status': true
       }),
     );
 

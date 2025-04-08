@@ -72,9 +72,15 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     }
   }
 
-  Future<void> toggleBreaker(int breakerId) async {
+  Future<void> toggleBreaker(int breakerId, breakerNum, breakerState) async {
     try {
-      await deviceService.sendCommand(widget.device['id'], "ToggleBreaker", breakerId: breakerId);
+      await deviceService.sendCommand(
+          widget.device['id'],
+          "toggleBreaker",
+          breakerId: breakerId,
+          breakerNum: breakerNum,
+          breakerState: breakerState
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Breaker toggled successfully')),
       );
@@ -120,7 +126,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   await deviceService.createBreaker(
                       name: name,
                       deviceId: widget.device['id'],
-                      breaker_number: number
+                      breakerNumber: number
                   );
 
                   // Optionally, fetch the updated list of breakers
@@ -279,7 +285,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                     ],
                   ),
                   onTap: () {
-                    toggleBreaker(breaker['id']);
+                    toggleBreaker(breaker['id'], int.parse(breaker['breaker_number']), breaker['status']);
                     setState(() {
                       breaker['status'] = breaker['status'] == true ? false : true;  // Toggle the status
                     });
