@@ -415,7 +415,7 @@ func createBreaker(c *gin.Context) {
 		DeviceID      int    `json:"device_id" binding:"required"`
 		Name          string `json:"name" binding:"required"`
 		BreakerNum    string `json:"breaker_number" binding:"required"`
-		BreakerStatus string `json:"status" binding:"required"`
+		BreakerStatus bool   `json:"status" binding:"required"`
 	}
 
 	var input BreakerInput
@@ -424,10 +424,10 @@ func createBreaker(c *gin.Context) {
 		return
 	}
 
-	sqlStatement := `INSERT INTO breakers (name, device_id, breaker_number, status) VALUES ($1, $2, $3, $4) RETURNING id`
-	fmt.Println(sqlStatement, input.Name, input.DeviceID, input.BreakerNum, input.BreakerStatus)
+	sqlStatement := `INSERT INTO breakers (device_id, name, breaker_number, status) VALUES ($1, $2, $3, $4) RETURNING id`
+	fmt.Println(sqlStatement, input.DeviceID, input.Name, input.BreakerNum, input.BreakerStatus)
 	var breakerID int
-	err := db.QueryRow(sqlStatement, input.Name, input.DeviceID, input.BreakerNum, input.BreakerStatus).Scan(&breakerID)
+	err := db.QueryRow(sqlStatement, input.DeviceID, input.Name, input.BreakerNum, input.BreakerStatus).Scan(&breakerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create device"})
 		return
