@@ -174,7 +174,7 @@ void moveToPosition(char axis, long targetPosition, int stepDelayUs) {
     delay(1);
 
     for (long i = 0; i < numStepsToTake; i++) {
-        if (!movingPositive && (*limitHitFlagPtr || digitalRead(limitPin) == LOW)) {
+        if (!movingPositive && *limitHitFlagPtr) {
             Serial.println("\nEMERGENCY STOP - Limit hit while moving towards home!");
             *limitHitFlagPtr = true;
             break;
