@@ -73,7 +73,7 @@ type Breaker struct {
 type DeviceResponse struct {
 	Command      string   `json:"command"`
 	MACAddr      string   `json:"mac_addr,omitempty"`
-	BreakerID    *int     `json:"breakerId,omitempty"`
+	BreakerNum   *int     `json:"breakerNum,omitempty"`
 	BreakerState *bool    `json:"breakerState,omitempty"`
 	Frequency    *float64 `json:"frequency,omitempty"`
 }
@@ -412,9 +412,10 @@ func deleteDevice(c *gin.Context) {
 
 func createBreaker(c *gin.Context) {
 	type BreakerInput struct {
-		DeviceID   int    `json:"device_id" binding:"required"`
-		Name       string `json:"name" binding:"required"`
-		BreakerNum string `json:"breaker_number" binding:"required"`
+		DeviceID      int    `json:"device_id" binding:"required"`
+		Name          string `json:"name" binding:"required"`
+		BreakerNum    string `json:"breaker_number" binding:"required"`
+		BreakerStatus string `json:"status" binding:"required"`
 	}
 
 	var input BreakerInput
@@ -423,10 +424,10 @@ func createBreaker(c *gin.Context) {
 		return
 	}
 
-	sqlStatement := `INSERT INTO breakers (name, device_id, breaker_number) VALUES ($1, $2, $3) RETURNING id`
-	fmt.Println(sqlStatement, input.Name, input.DeviceID, input.BreakerNum)
+	sqlStatement := `INSERT INTO breakers (name, device_id, breaker_number, status) VALUES ($1, $2, $3, $4) RETURNING id`
+	fmt.Println(sqlStatement, input.Name, input.DeviceID, input.BreakerNum, input.BreakerStatus)
 	var breakerID int
-	err := db.QueryRow(sqlStatement, input.Name, input.DeviceID, input.BreakerNum).Scan(&breakerID)
+	err := db.QueryRow(sqlStatement, input.Name, input.DeviceID, input.BreakerNum, input.BreakerStatus).Scan(&breakerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create device"})
 		return
@@ -529,6 +530,7 @@ func sendPacket(c *gin.Context) {
 	var reqBody struct {
 		Command      string `json:"command"`
 		BreakerID    *int   `json:"breakerId,omitempty"`
+		BreakerNum   *int   `json:"breakerNumber,omitempty"`
 		BreakerState *bool  `json:"breakerState,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&reqBody); err != nil {
@@ -548,7 +550,7 @@ func sendPacket(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Breaker ID and state required"})
 			return
 		}
-		payload = fmt.Sprintf(`{"command": "toggleBreaker", "breakerId": %d, "breakerState": %v}`, *reqBody.BreakerID, *reqBody.BreakerState)
+		payload = fmt.Sprintf(`{"command": "toggleBreaker", "breakerID": %d, "breakerNum": %d, "breakerState": %v}`, *reqBody.BreakerID, *reqBody.BreakerNum, *reqBody.BreakerState)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown command"})
 		return
@@ -593,6 +595,7 @@ func receivePacket(conn *websocket.Conn) {
 			handleCommandAcknowledgment(response)
 		case "frequencyUpdate":
 			handleTelemetryData(response)
+		case "ACK":
 		default:
 			log.Println("Unknown command received:", response.Command)
 		}
@@ -600,18 +603,36 @@ func receivePacket(conn *websocket.Conn) {
 }
 
 func handleCommandAcknowledgment(response DeviceResponse) {
-	if response.BreakerID == nil || response.BreakerState == nil {
+	if response.BreakerNum == nil || response.BreakerState == nil {
 		log.Println("Missing breaker toggle response data")
 		return
 	}
 
-	// Update breaker status in the database
-	_, err := db.Exec(`UPDATE breakers SET status = $1 WHERE id = $2`, *response.BreakerState, *response.BreakerID)
+	// Step 1: Get device ID from MAC address
+	var deviceID int
+	err := db.QueryRow(`SELECT id FROM devices WHERE mac_addr = $1`, response.MACAddr).Scan(&deviceID)
+	if err != nil {
+		log.Println("Device not found for MAC:", response.MACAddr)
+		return
+	}
+
+	// Step 2: Get breaker ID using deviceID and breakerNum
+	var breakerID int
+	err = db.QueryRow(`SELECT id FROM breakers WHERE device_id = $1 AND breaker_number = $2`, deviceID, *response.BreakerNum).Scan(&breakerID)
+	if err != nil {
+		log.Println("Breaker not found for device:", deviceID, "breaker num:", *response.BreakerNum)
+		return
+	}
+
+	// Step 3: Update breaker status
+	_, err = db.Exec(`UPDATE breakers SET status = $1 WHERE id = $2`, *response.BreakerState, breakerID)
 	if err != nil {
 		log.Println("Database update failed:", err)
 		return
 	}
-	// log.Printf("Breaker %d updated to status %v", *response.BreakerID, *response.BreakerState)
+
+	// Optional log
+	// log.Printf("Breaker %d (device %d) updated to status %v", breakerID, deviceID, *response.BreakerState)
 }
 
 func handleTelemetryData(response DeviceResponse) {
