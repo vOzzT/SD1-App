@@ -2,6 +2,7 @@
 #include <WiFiManager.h>
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
+#include <RunningMedian.h>
 
 using namespace websockets;
 
@@ -17,7 +18,7 @@ const int stepPinX = 14, dirPinX = 18, enPinX = 19;
 const uint8_t limitPinY = 27, limitPinX = 26;
 
 // Frequency & LED Control
-constexpr float LOWER_FREQ_BOUND = 59.0f, UPPER_FREQ_BOUND = 61.0f;
+constexpr float LOWER_FREQ_BOUND = 59.000, UPPER_FREQ_BOUND = 61.000;
 
 // Homing Configuration
 const bool HOME_DIR_Y = LOW, HOME_DIR_X = LOW;
@@ -27,27 +28,31 @@ const int HOMING_STEP_DELAY_US = 500;
 volatile long currentPositionY = 0, currentPositionX = 0, currentRow = 0;
 volatile bool limitY_hit = false, limitX_hit = false;
 volatile unsigned long lastEdgeTime = 0;
-volatile float measuredFrequency = 0.0f;
+volatile unsigned long currentEdgeTime = 0;
+float measuredFrequency = 0.0;
 int FreqqyPacketFlag = 0;
 bool freqBreakerState = true;
+long medianFreq;
 unsigned long lastPrintTime = 0, lastReconnectAttempt = 0;
 
 WiFiManager wifiManager;
+RunningMedian samples = RunningMedian(60);
 WebsocketsClient client;
 
 // --- Interrupt Service Routines ---
 void IRAM_ATTR isrY() { limitY_hit = true; }
 void IRAM_ATTR isrX() { limitX_hit = true; }
 void IRAM_ATTR onEdge() {
-    unsigned long currentEdgeTime = micros();
+    currentEdgeTime = micros();
     unsigned long interval = currentEdgeTime - lastEdgeTime;
 
-    if (interval > 100 && interval < 5000000) {
+    if (interval > 100 && interval < 10000000) {
         lastEdgeTime = currentEdgeTime;
-        measuredFrequency = 1'000'000.0f / interval;
+        measuredFrequency = 1000000.0 / interval;
     } else {
-        measuredFrequency = 0.0f;
+        measuredFrequency = 0.0;
     }
+    samples.add(measuredFrequency);
 }
 
 // --- Helper Motor Functions ---
@@ -241,7 +246,7 @@ void sendFrequencyUpdate() {
             StaticJsonDocument<128> doc;
             doc["mac_addr"] = WiFi.macAddress();
             doc["command"] = "frequencyUpdate";
-            doc["frequency"] = measuredFrequency;
+            doc["frequency"] = medianFreq;
 
             char messageBuffer[128];
             serializeJson(doc, messageBuffer);
@@ -249,13 +254,21 @@ void sendFrequencyUpdate() {
         }
 
         FreqqyPacketFlag++;
-        Serial.printf("Sent Frequency: %.3f Hz\n", measuredFrequency);
+        Serial.printf("Sent Frequency: %.3f Hz\n", medianFreq);
     }
 }
 
 // Handle LED Blinking Based on Frequency
 void handleFrequencyRoutine() {
-    if (measuredFrequency < 50 || measuredFrequency > 500 || measuredFrequency == 0.0f) {
+    if (samples.isFull()){
+      medianFreq = samples.getMedian();
+    }
+
+    //for (int i = 0; i<samples.getSize();i++){
+    //  Serial.printf("Element %d: %f\n", i, samples.getElement(i));
+    //}
+
+    if (medianFreq < LOWER_FREQ_BOUND || medianFreq > UPPER_FREQ_BOUND || medianFreq == 0.0f) {
       if (freqBreakerState) {
             flipSwitch(1, 'F');
             sendWebSocketMessage("toggleBreaker", 1, false);
@@ -305,16 +318,6 @@ void onMessageCallback(WebsocketsMessage message) {
 void setup() {
     Serial.begin(115200);
 
-    // Configure Y and X axis, Limit switches, and Frequency sensing pin
-    pinMode(stepPinY, OUTPUT); pinMode(dirPinY, OUTPUT); pinMode(enPinY, OUTPUT);
-    pinMode(stepPinX, OUTPUT); pinMode(dirPinX, OUTPUT); pinMode(enPinX, OUTPUT);
-    pinMode(limitPinY, INPUT_PULLDOWN); pinMode(limitPinX, INPUT_PULLDOWN);
-    pinMode(SIGNAL_IN_PIN, INPUT_PULLDOWN);
-
-    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, RISING);
-    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, RISING);
-    attachInterrupt(digitalPinToInterrupt(SIGNAL_IN_PIN), onEdge, RISING);
-
     // Uncomment this to reset saved Wi-Fi credentials
     // wifiManager.resetSettings(); 
 
@@ -322,6 +325,16 @@ void setup() {
         Serial.println("Wi-Fi connection failed. Restarting...");
         ESP.restart();
     }
+
+    // Configure Y and X axis, Limit switches, and Frequency sensing pin
+    pinMode(stepPinY, OUTPUT); pinMode(dirPinY, OUTPUT); pinMode(enPinY, OUTPUT);
+    pinMode(stepPinX, OUTPUT); pinMode(dirPinX, OUTPUT); pinMode(enPinX, OUTPUT);
+    pinMode(limitPinY, INPUT_PULLDOWN); pinMode(limitPinX, INPUT_PULLDOWN);
+    pinMode(SIGNAL_IN_PIN, INPUT);
+
+    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, RISING);
+    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, RISING);
+    attachInterrupt(digitalPinToInterrupt(SIGNAL_IN_PIN), onEdge, RISING);
 
     Serial.println("Connected to Wi-Fi!");
     client.onMessage(onMessageCallback);
