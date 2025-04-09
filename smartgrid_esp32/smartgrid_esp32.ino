@@ -114,30 +114,54 @@ void homeAxis(const char* axisName, int stepPin, int dirPin, int enPin, uint8_t 
 }
 
 void flipSwitch(int switchNumber, char onOff) {
-    long movenumb = (7500 + 2500 * switchNumber);
-    int startRow = (switchNumber % 2 == 0) ? 1 : 0;
-    int flipRow = (switchNumber % 2 == 0) ? 2 : 1;
+    long yPos = (switchNumber % 2 == 0) ? (5000 + 2500 * switchNumber) : (7500 + 2500 * switchNumber);
+    bool isEven = (switchNumber % 2 == 0);
+
     Serial.printf("Turning breaker %d %c\n", switchNumber, onOff);
-    if (onOff == 'N') { // Turn on the switch
-        if (currentRow != startRow) {
-            moveToStartPosition('Y', 5000, 150);
-            currentRow = startRow;
+
+    if (!isEven) {  // ODD switch
+        if (onOff == 'N') {
+            if (currentRow != 0) {
+                moveToStartPosition('Y', 5000, 150);
+                currentRow = 0;
+            }
+            moveToSwitchPosition('X', 1000, 250);
+            moveToSwitchPosition('Y', yPos, 150);
+            flipSwitchAction('X', 4000, 500);
+            moveToSwitchPosition('X', 1000, 250);
+        } else {
+            if (currentRow != 1) {
+                moveToStartPosition('Y', 5000, 150);
+                currentRow = 1;
+            }
+            moveToSwitchPosition('X', 9300, 250);
+            moveToSwitchPosition('Y', yPos, 150);
+            flipSwitchAction('X', 5300, 500);
+            moveToSwitchPosition('X', 9300, 250);
         }
-        moveToSwitchPosition('X', 1000, 250);
-        moveToSwitchPosition('Y', movenumb, 150);
-        flipSwitchAction('X', 4000, 500);
-        moveToSwitchPosition('X', 1000, 250);
-    } else { // Turn off the switch
-        if (currentRow != flipRow) {
-            moveToStartPosition('Y', 5000, 150);
-            currentRow = flipRow;
+    } else {  // EVEN switch
+        if (onOff == 'F') {  // Turning ON (note: 'F' for even == ON here)
+            if (currentRow != 1) {
+                moveToStartPosition('Y', 5000, 150);
+                currentRow = 1;
+            }
+            moveToSwitchPosition('X', 9300, 250);
+            moveToSwitchPosition('Y', yPos, 150);
+            flipSwitchAction('X', 13300, 500);
+            moveToSwitchPosition('X', 9300, 250);
+        } else {  // Turning OFF
+            if (currentRow != 2) {
+                moveToStartPosition('Y', 5000, 150);
+                currentRow = 2;
+            }
+            moveToSwitchPosition('X', 17600, 250);
+            moveToSwitchPosition('Y', yPos, 150);
+            flipSwitchAction('X', 14600, 500);
+            moveToSwitchPosition('X', 17600, 250);
         }
-        moveToSwitchPosition('X', 9300, 250);
-        moveToSwitchPosition('Y', movenumb, 150);
-        flipSwitchAction('X', 5300, 500);
-        moveToSwitchPosition('X', 9300, 250);
     }
 }
+
   
 void moveToPosition(char axis, long targetPosition, int stepDelayUs) {
     int stepPin, dirPin, enPin;
