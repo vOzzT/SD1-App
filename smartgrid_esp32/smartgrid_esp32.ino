@@ -45,7 +45,7 @@ void IRAM_ATTR onEdge() {
     currentEdgeTime = micros();
     unsigned long interval = currentEdgeTime - lastEdgeTime;
 
-    if (interval > 60 && interval < 6000000) {
+    if (interval > 13500 && interval < 6000000) {
         lastEdgeTime = currentEdgeTime;
         measuredFrequency = 1000000.0 / interval;
     } else {
@@ -121,42 +121,42 @@ void flipSwitch(int switchNumber, char onOff) {
     if (!isEven) {  // ODD switch
         if (onOff == 'N') {
             if (currentRow != 0) {
-                moveToStartPosition('Y', 5000, 100);
+                moveToStartPosition('Y', 5000, 75);
                 currentRow = 0;
             }
-            moveToSwitchPosition('X', 1000, 100);
-            moveToSwitchPosition('Y', yPos, 100);
+            moveToSwitchPosition('X', 1000, 75);
+            moveToSwitchPosition('Y', yPos, 75);
             flipSwitchAction('X', 4000, 250);
-            moveToSwitchPosition('X', 1000, 100);
+            moveToSwitchPosition('X', 1000, 75);
         } else {
             if (currentRow != 1) {
-                moveToStartPosition('Y', 5000, 100);
+                moveToStartPosition('Y', 5000, 75);
                 currentRow = 1;
             }
-            moveToSwitchPosition('X', 9300, 100);
-            moveToSwitchPosition('Y', yPos, 100);
+            moveToSwitchPosition('X', 9300, 75);
+            moveToSwitchPosition('Y', yPos, 75);
             flipSwitchAction('X', 5300, 250);
-            moveToSwitchPosition('X', 9300, 100);
+            moveToSwitchPosition('X', 9300, 75);
         }
     } else {  // EVEN switch
         if (onOff == 'F') {  // Turning Off (note: 'F' for even == ON here)
             if (currentRow != 1) {
-                moveToStartPosition('Y', 5000, 100);
+                moveToStartPosition('Y', 5000, 75);
                 currentRow = 1;
             }
-            moveToSwitchPosition('X', 9300, 100);
-            moveToSwitchPosition('Y', yPos, 100);
+            moveToSwitchPosition('X', 9300, 75);
+            moveToSwitchPosition('Y', yPos, 75);
             flipSwitchAction('X', 13300, 250);
-            moveToSwitchPosition('X', 9300, 100);
+            moveToSwitchPosition('X', 9300, 75);
         } else {  // Turning OFF
             if (currentRow != 2) {
-                moveToStartPosition('Y', 5000, 100);
+                moveToStartPosition('Y', 5000, 75);
                 currentRow = 2;
             }
-            moveToSwitchPosition('X', 17600, 100);
-            moveToSwitchPosition('Y', yPos, 100);
+            moveToSwitchPosition('X', 17600, 75);
+            moveToSwitchPosition('Y', yPos, 75);
             flipSwitchAction('X', 14000, 250);
-            moveToSwitchPosition('X', 17600, 100);
+            moveToSwitchPosition('X', 17600, 75);
         }
     }
 }
@@ -430,6 +430,7 @@ void setup() {
     Serial.print("Initial Position X: "); Serial.println(currentPositionX);
     Serial.print("Initial Position Y: "); Serial.println(currentPositionY);
 
+    Serial.println("Syncing system with server.");
     sendWebSocketMessage("fetchBreakers");
     
 }
