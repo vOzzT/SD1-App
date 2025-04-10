@@ -595,6 +595,8 @@ func receivePacket(conn *websocket.Conn) {
 			handleCommandAcknowledgment(response)
 		case "frequencyUpdate":
 			handleTelemetryData(response)
+		case "fetchBreakers":
+			handleBreakerList(response)
 		case "ACK":
 		default:
 			log.Println("Unknown command received:", response.Command)
@@ -656,6 +658,70 @@ func handleTelemetryData(response DeviceResponse) {
 		return
 	}
 	// log.Printf("Frequency %.2f Hz logged for device %d", *response.Frequency, deviceID)
+}
+
+func handleBreakerList(response DeviceResponse) {
+	// Step 1: Get device ID from MAC address
+	var deviceID int
+	err := db.QueryRow(`SELECT id FROM devices WHERE mac_addr = $1`, response.MACAddr).Scan(&deviceID)
+	if err != nil {
+		log.Println("Device not found for MAC:", response.MACAddr)
+		return
+	}
+
+	// Query breakers associated with the device ID
+	sqlStatement := `SELECT breaker_number, status FROM breakers WHERE device_id = $1`
+	rows, err := db.Query(sqlStatement, deviceID)
+	if err != nil {
+		log.Println("Breakers not found for MAC:", response.MACAddr)
+		return
+	}
+	defer rows.Close()
+
+	// Create a simplified struct for ESP32
+	type BreakerPayload struct {
+		BreakerNumber int  `json:"breaker_number"`
+		Status        bool `json:"status"`
+	}
+
+	var payloadList []BreakerPayload
+
+	for rows.Next() {
+		var breaker BreakerPayload
+		if err := rows.Scan(&breaker.BreakerNumber, &breaker.Status); err != nil {
+			log.Println("Failed to parse breakers for MAC:", response.MACAddr)
+			return
+		}
+		payloadList = append(payloadList, breaker)
+	}
+
+	// Check if the device is connected via WebSocket
+	mu.Lock()
+	conn, exists := deviceConnections[response.MACAddr]
+	mu.Unlock()
+
+	if !exists {
+		log.Println("Failed to find connected device:", response.MACAddr)
+		return
+	}
+
+	// Marshal and send only the necessary payload
+	payload, err := json.Marshal(payloadList)
+	if err != nil {
+		log.Println("Failed to marshal breaker payload:", err)
+		return
+	}
+
+	err = conn.WriteMessage(websocket.TextMessage, payload)
+	if err != nil {
+		log.Println("WebSocket write failed for:", response.MACAddr, err)
+		mu.Lock()
+		delete(deviceConnections, response.MACAddr) // Remove stale connection
+		mu.Unlock()
+		conn.Close()
+		log.Println("Device Disconnected:", response.MACAddr, err)
+		return
+	}
 }
 
 func AuthMiddleware() gin.HandlerFunc {

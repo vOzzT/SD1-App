@@ -22,17 +22,16 @@ constexpr float LOWER_FREQ_BOUND = 59.000, UPPER_FREQ_BOUND = 61.000;
 
 // Homing Configuration
 const bool HOME_DIR_Y = LOW, HOME_DIR_X = LOW;
-const int HOMING_STEP_DELAY_US = 500;
+const int HOMING_STEP_DELAY_US = 250;
 
 // --- Global Variables ---
 volatile long currentPositionY = 0, currentPositionX = 0, currentRow = 0;
-volatile bool limitY_hit = false, limitX_hit = false;
+volatile bool limitY_hit = false, limitX_hit = false, prevOOB = false;
 volatile unsigned long lastEdgeTime = 0;
 volatile unsigned long currentEdgeTime = 0;
 float measuredFrequency = 0.0;
 int FreqqyPacketFlag = 0;
-bool freqBreakerState = true;
-long medianFreq;
+float medianFreq;
 unsigned long lastPrintTime = 0, lastReconnectAttempt = 0;
 
 WiFiManager wifiManager;
@@ -46,7 +45,7 @@ void IRAM_ATTR onEdge() {
     currentEdgeTime = micros();
     unsigned long interval = currentEdgeTime - lastEdgeTime;
 
-    if (interval > 100 && interval < 10000000) {
+    if (interval > 60 && interval < 6000000) {
         lastEdgeTime = currentEdgeTime;
         measuredFrequency = 1000000.0 / interval;
     } else {
@@ -64,21 +63,21 @@ void moveStepper(int stepPin, int stepDelayUs) {
 }
 
 void moveToStartPosition(char axis, int startPosition, int stepDelayUs) {
-    Serial.printf("Moving %c axis to start position...\n", axis);
+    // Serial.printf("Moving %c axis to start position...\n", axis);
     moveToPosition(axis, startPosition, stepDelayUs);
-    delay(1000);
+    delay(250);
 }
 
 void moveToSwitchPosition(char axis, long position, int stepDelayUs) {
-    Serial.printf("Moving %c axis to switch position: %ld...\n", axis, position);
+    // Serial.printf("Moving %c axis to switch position: %ld...\n", axis, position);
     moveToPosition(axis, position, stepDelayUs);
-    delay(1000);
+    delay(250);
 }
 
 void flipSwitchAction(char axis, long flipPosition, int stepDelayUs) {
-    Serial.printf("Flipping switch on %c axis at position: %ld...\n", axis, flipPosition);
+    // Serial.printf("Flipping switch on %c axis at position: %ld...\n", axis, flipPosition);
     moveToPosition(axis, flipPosition, stepDelayUs);
-    delay(1000);
+    delay(250);
 }
 
 // --- Motor Functions ---
@@ -96,7 +95,7 @@ void homeAxis(const char* axisName, int stepPin, int dirPin, int enPin, uint8_t 
     }
 
     delay(10);
-    digitalWrite(enPin, HIGH);
+    // digitalWrite(enPin, HIGH);
 
     if (limitHitFlag) {
         Serial.printf("%s axis homed successfully.\n", axisName);
@@ -105,7 +104,7 @@ void homeAxis(const char* axisName, int stepPin, int dirPin, int enPin, uint8_t 
         Serial.printf("Error: Homing failed for %s axis.\n", axisName);
         while (1) {
             Serial.println("HOMING FAILED - HALTED");
-            delay(1000);
+            delay(250);
         }
     }
 
@@ -122,42 +121,42 @@ void flipSwitch(int switchNumber, char onOff) {
     if (!isEven) {  // ODD switch
         if (onOff == 'N') {
             if (currentRow != 0) {
-                moveToStartPosition('Y', 5000, 150);
+                moveToStartPosition('Y', 5000, 100);
                 currentRow = 0;
             }
-            moveToSwitchPosition('X', 1000, 250);
-            moveToSwitchPosition('Y', yPos, 150);
-            flipSwitchAction('X', 4000, 500);
-            moveToSwitchPosition('X', 1000, 250);
+            moveToSwitchPosition('X', 1000, 100);
+            moveToSwitchPosition('Y', yPos, 100);
+            flipSwitchAction('X', 4000, 250);
+            moveToSwitchPosition('X', 1000, 100);
         } else {
             if (currentRow != 1) {
-                moveToStartPosition('Y', 5000, 150);
+                moveToStartPosition('Y', 5000, 100);
                 currentRow = 1;
             }
-            moveToSwitchPosition('X', 9300, 250);
-            moveToSwitchPosition('Y', yPos, 150);
-            flipSwitchAction('X', 5300, 500);
-            moveToSwitchPosition('X', 9300, 250);
+            moveToSwitchPosition('X', 9300, 100);
+            moveToSwitchPosition('Y', yPos, 100);
+            flipSwitchAction('X', 5300, 250);
+            moveToSwitchPosition('X', 9300, 100);
         }
     } else {  // EVEN switch
-        if (onOff == 'F') {  // Turning ON (note: 'F' for even == ON here)
+        if (onOff == 'F') {  // Turning Off (note: 'F' for even == ON here)
             if (currentRow != 1) {
-                moveToStartPosition('Y', 5000, 150);
+                moveToStartPosition('Y', 5000, 100);
                 currentRow = 1;
             }
-            moveToSwitchPosition('X', 9300, 250);
-            moveToSwitchPosition('Y', yPos, 150);
-            flipSwitchAction('X', 13300, 500);
-            moveToSwitchPosition('X', 9300, 250);
+            moveToSwitchPosition('X', 9300, 100);
+            moveToSwitchPosition('Y', yPos, 100);
+            flipSwitchAction('X', 13300, 250);
+            moveToSwitchPosition('X', 9300, 100);
         } else {  // Turning OFF
             if (currentRow != 2) {
-                moveToStartPosition('Y', 5000, 150);
+                moveToStartPosition('Y', 5000, 100);
                 currentRow = 2;
             }
-            moveToSwitchPosition('X', 17600, 250);
-            moveToSwitchPosition('Y', yPos, 150);
-            flipSwitchAction('X', 14600, 500);
-            moveToSwitchPosition('X', 17600, 250);
+            moveToSwitchPosition('X', 17600, 100);
+            moveToSwitchPosition('Y', yPos, 100);
+            flipSwitchAction('X', 14000, 250);
+            moveToSwitchPosition('X', 17600, 100);
         }
     }
 }
@@ -197,7 +196,7 @@ void moveToPosition(char axis, long targetPosition, int stepDelayUs) {
     digitalWrite(dirPin, movingPositive ? positiveDirectionIsHigh : !positiveDirectionIsHigh);
     long numStepsToTake = abs(stepsNeeded);
 
-    Serial.printf("Axis %c moving from %ld to %ld (Steps: %ld)\n", axis, currentPosValue, targetPosition, stepsNeeded);
+    // Serial.printf("Axis %c moving from %ld to %ld (Steps: %ld)\n", axis, currentPosValue, targetPosition, stepsNeeded);
 
     digitalWrite(enPin, LOW);
     delay(1);
@@ -217,9 +216,9 @@ void moveToPosition(char axis, long targetPosition, int stepDelayUs) {
         yield();
     }
 
-    digitalWrite(enPin, HIGH);
+    // digitalWrite(enPin, HIGH);
     *limitHitFlagPtr = false;
-    Serial.printf("Final position: %ld\n", *currentPositionPtr);
+    // Serial.printf("Final position: %ld\n", *currentPositionPtr);
 }
 
 // --- WebSocket Functions ---
@@ -288,23 +287,37 @@ void handleFrequencyRoutine() {
       medianFreq = samples.getMedian();
     }
 
-    //for (int i = 0; i<samples.getSize();i++){
-    //  Serial.printf("Element %d: %f\n", i, samples.getElement(i));
-    //}
+    /*
+    for (int i = 0; i<samples.getSize();i++){
+        Serial.printf("Element %d: %f\n", i, samples.getElement(i));
+    }
+    */
 
-    if (medianFreq < LOWER_FREQ_BOUND || medianFreq > UPPER_FREQ_BOUND || medianFreq == 0.0f) {
-      if (freqBreakerState) {
+    sendFrequencyUpdate();
+
+    if (medianFreq < LOWER_FREQ_BOUND || medianFreq > UPPER_FREQ_BOUND && prevOOB == false) { // out of bounds and hasnt done anything prior
+            Serial.println("Frequency out of range, turning breakers off.");
+            flipSwitch(8, 'F');
+            flipSwitch(5, 'F');
+            flipSwitch(4, 'F');
             flipSwitch(1, 'F');
+            sendWebSocketMessage("toggleBreaker", 8, false);
+            sendWebSocketMessage("toggleBreaker", 5, false);
+            sendWebSocketMessage("toggleBreaker", 4, false);
             sendWebSocketMessage("toggleBreaker", 1, false);
-            freqBreakerState = !freqBreakerState;
-            Serial.println("Frequency out of range, turning off breaker.");
-      } else if (!freqBreakerState) {
-            flipSwitch(1, 'N'); // Turn on the breaker
+            prevOOB = true;
+    } if (medianFreq >= LOWER_FREQ_BOUND && medianFreq <= UPPER_FREQ_BOUND && prevOOB) { // back in bounds and previously flipped breakers
+            Serial.println("Frequency back in range, Turning breakers on.");
+            flipSwitch(5, 'N');
+            flipSwitch(1, 'N');
+            flipSwitch(8, 'N');
+            flipSwitch(4, 'N');
+            sendWebSocketMessage("toggleBreaker", 5, true);
             sendWebSocketMessage("toggleBreaker", 1, true);
-            freqBreakerState = !freqBreakerState;
-            Serial.println("Frequency out of range, turning on breaker.");
-      }
-    } 
+            sendWebSocketMessage("toggleBreaker", 8, true);
+            sendWebSocketMessage("toggleBreaker", 4, true);
+            prevOOB = false;
+    }
 }
 
 // Handle Incoming WebSocket Messages
@@ -312,11 +325,35 @@ void onMessageCallback(WebsocketsMessage message) {
     Serial.print("Received: ");
     Serial.println(message.data());
 
-    StaticJsonDocument<128> doc;
-    if (deserializeJson(doc, message.data())) {
-        Serial.println("JSON Parse Error!");
+    StaticJsonDocument<256> doc;
+
+    DeserializationError error = deserializeJson(doc, message.data());
+    if (error) {
+        Serial.print("JSON Parse Error: ");
+        Serial.println(error.c_str());
         return;
     }
+
+    // Check if it's an array (for breaker list)
+    if (doc.is<JsonArray>()) {
+    JsonArray breakers = doc.as<JsonArray>();
+    for (JsonObject breaker : breakers) {
+        int breaker_number = breaker["breaker_number"];
+        bool status = breaker["status"];
+
+        if (status) {
+            // Breaker already ON, skip it
+            Serial.printf("Breaker %d already ON, skipping.\n", breaker_number);
+            continue;
+        }
+
+        // Breaker is OFF, flip it ON
+        Serial.printf("Breaker %d is OFF, flipping ON.\n", breaker_number);
+        flipSwitch(breaker_number, 'N');
+        sendWebSocketMessage("toggleBreaker", breaker_number, true);
+    }
+    return;
+}
 
     const char* command = doc["command"];
     int breakerId = doc["breakerId"] | -1;
@@ -356,8 +393,8 @@ void setup() {
     pinMode(limitPinY, INPUT_PULLDOWN); pinMode(limitPinX, INPUT_PULLDOWN);
     pinMode(SIGNAL_IN_PIN, INPUT);
 
-    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, RISING);
-    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, RISING);
+    attachInterrupt(digitalPinToInterrupt(limitPinY), isrY, HIGH);
+    attachInterrupt(digitalPinToInterrupt(limitPinX), isrX, HIGH);
     attachInterrupt(digitalPinToInterrupt(SIGNAL_IN_PIN), onEdge, RISING);
 
     Serial.println("Connected to Wi-Fi!");
@@ -365,6 +402,7 @@ void setup() {
     connectWebSocket();
 
     Serial.println("Starting homing procedure...");
+    /* 
     Serial.print("Y State: ");
     Serial.println(digitalRead(limitPinY));
     Serial.print("Y FLAG: ");
@@ -372,28 +410,33 @@ void setup() {
     Serial.print("X State: ");
     Serial.println(digitalRead(limitPinX));
     Serial.print("X FLAG: ");
-    Serial.println(limitX_hit);
+    Serial.println(limitX_hit); 
+    */
 
-    homeAxis("Y", stepPinY, dirPinY, enPinY, limitPinY, limitY_hit, currentPositionY, HOME_DIR_Y, HOMING_STEP_DELAY_US);
+    // homeAxis("Y", stepPinY, dirPinY, enPinY, limitPinY, limitY_hit, currentPositionY, HOME_DIR_Y, HOMING_STEP_DELAY_US);
 
+    /* 
     Serial.println("Post Hone Y");
     Serial.print("Y FLAG: ");
     Serial.println(limitY_hit);
     Serial.print("X FLAG: ");
-    Serial.println(limitX_hit);
+    Serial.println(limitX_hit); 
+    */
     
-    homeAxis("X", stepPinX, dirPinX, enPinX, limitPinX, limitX_hit, currentPositionX, HOME_DIR_X, HOMING_STEP_DELAY_US);
+    // homeAxis("X", stepPinX, dirPinX, enPinX, limitPinX, limitX_hit, currentPositionX, HOME_DIR_X, HOMING_STEP_DELAY_US);
     currentRow = 0; // set correct row
 
-    Serial.println("\nSetup complete. Both axes homed.");
+    Serial.println("Setup complete. Both axes homed.");
     Serial.print("Initial Position X: "); Serial.println(currentPositionX);
     Serial.print("Initial Position Y: "); Serial.println(currentPositionY);
+
+    sendWebSocketMessage("fetchBreakers");
     
 }
 
 // Main Loop
 void loop() {
     handleWebSocket();
-    handleFrequencyRoutine();
+    // handleFrequencyRoutine();
     sendFrequencyUpdate();
 }
