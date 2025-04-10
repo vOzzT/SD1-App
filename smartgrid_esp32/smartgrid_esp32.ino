@@ -413,7 +413,7 @@ void setup() {
     Serial.println(limitX_hit); 
     */
 
-    // homeAxis("Y", stepPinY, dirPinY, enPinY, limitPinY, limitY_hit, currentPositionY, HOME_DIR_Y, HOMING_STEP_DELAY_US);
+    homeAxis("Y", stepPinY, dirPinY, enPinY, limitPinY, limitY_hit, currentPositionY, HOME_DIR_Y, HOMING_STEP_DELAY_US);
 
     /* 
     Serial.println("Post Hone Y");
@@ -423,7 +423,7 @@ void setup() {
     Serial.println(limitX_hit); 
     */
     
-    // homeAxis("X", stepPinX, dirPinX, enPinX, limitPinX, limitX_hit, currentPositionX, HOME_DIR_X, HOMING_STEP_DELAY_US);
+    homeAxis("X", stepPinX, dirPinX, enPinX, limitPinX, limitX_hit, currentPositionX, HOME_DIR_X, HOMING_STEP_DELAY_US);
     currentRow = 0; // set correct row
 
     Serial.println("Setup complete. Both axes homed.");
@@ -437,6 +437,6 @@ void setup() {
 // Main Loop
 void loop() {
     handleWebSocket();
-    // handleFrequencyRoutine();
+    handleFrequencyRoutine();
     sendFrequencyUpdate();
 }
